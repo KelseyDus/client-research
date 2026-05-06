@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClientINTEL — AI Research Agent</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body { background: #07080c; color: #e8e9ef; font-family: 'DM Mono', 'Courier New', monospace; }
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-thumb { background: #2a2b35; border-radius: 2px; }
+    @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes pulseGlow { 0%,100% { box-shadow:0 0 0 0 rgba(0,229,255,0.4); } 50% { box-shadow:0 0 0 8px rgba(0,229,255,0); } }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .fade-up { animation: fadeUp 0.35s ease forwards; }
+    .tab-item:hover { background: rgba(255,255,255,0.04) !important; }
+    .ifield:focus { border-color: #00e5ff !important; outline: none; }
+    .btnp:hover:not(:disabled) { background: #33ecff !important; }
+    .btns:hover { background: #1a1b24 !important; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef } = React;
+
+const SECTIONS = [
+  { id:'demographics', label:'Demographics & Market', icon:'◎', color:'#00e5ff', prompt:(c)=>`Search the web and give a brief market research summary for ${c.name} (${c.industry}, ${c.location}). Cover: target audience age/gender/income, market size estimate, 2-3 customer personas, and 3 key market trends. Be concise.` },
+  { id:'competitors',  label:'Competitor Analysis',   icon:'⊕', color:'#ff6b35', prompt:(c)=>`Search the web and list the top 5 competitors of ${c.name} (${c.industry}, ${c.location}). For each: name, website, main strength, main weakness. Then list 2 market gaps ${c.name} could exploit. Be concise.` },
+  { id:'website',      label:'Website Audit',          icon:'◈', color:'#7c3aed', prompt:(c)=>`Search the web and audit ${c.website} for ${c.name}. Cover: SEO basics, mobile/speed signals, UX and CTAs, content quality, top 3 issues, and 3 quick wins. Be concise.` },
+  { id:'keywords',     label:'Keywords & SEO',         icon:'◐', color:'#10b981', prompt:(c)=>`Search the web and suggest an SEO keyword strategy for ${c.name} (${c.industry}, ${c.location}). List: 8 primary keywords, 6 long-tail phrases, 3 local terms, and 2 content cluster ideas. Be concise.` },
+  { id:'advertising',  label:'Ad Strategy & Spend',    icon:'◉', color:'#f59e0b', prompt:(c)=>`Search the web including Meta Ad Library and Google Ads Transparency for ${c.name} ad presence. Cover: active platforms, messaging themes, estimated spend tier, and 3 recommended ad angles. Be concise.` },
+];
+
+const SWOT_PROMPT = (c, secs) =>
+  "Write a SWOT for " + c.name + " (" + c.industry + ", " + c.location + ") based on:\n" +
+  secs.map(s => s.label + ": " + (s.content||"").substring(0,200)).join("\n") +
+  "\n\nFormat: STRENGTHS (3), WEAKNESSES (3), OPPORTUNITIES (3), THREATS (3), then a 2-sentence 90-day recommendation. Be concise.";
+
+const delay = ms => new Promise(r => setTimeout(r, ms));
+
+async function callAPI(prompt) {
+  const res = await fetch('/api/research', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'API error ' + res.status);
+  }
+  const data = await res.json();
+  return data.result || 'No content returned.';
+}
+
+function RenderContent({ text }) {
+  if (!text) return null;
+  return (
+    <div style={{ lineHeight:1.85, fontSize:13.5 }}>
+      {text.split('\n').map((line, i) => {
+        if (/^#{1,3}\s/.test(line)) {
+          const lvl = line.match(/^(#+)/)[1].length;
+          return <div key={i} style={{ fontSize:lvl===1?18:lvl===2?15:13.5, fontWeight:700, color:'#e8e9ef', marginTop:lvl===1?24:16, marginBottom:6, fontFamily:"'Syne',sans-serif" }}>{line.replace(/^#+\s/,'')}</div>;
+        }
+        if (/^[-•]\s/.test(line)) return (
+          <div key={i} style={{ display:'flex', gap:10, marginBottom:5, paddingLeft:8 }}>
+            <span style={{ color:'#444', flexShrink:0 }}>—</span>
+            <span style={{ color:'#a8a9b0' }}>{line.replace(/^[-•]\s/,'')}</span>
+          </div>
+        );
+        if (/^\d+\.\s/.test(line)) return (
+          <div key={i} style={{ display:'flex', gap:10, marginBottom:5, paddingLeft:8 }}>
+            <span style={{ color:'#555', flexShrink:0, minWidth:20 }}>{line.match(/^\d+/)[0]}.</span>
+            <span style={{ color:'#a8a9b0' }}>{line.replace(/^\d+\.\s/,'')}</span>
+          </div>
+        );
+        if (!line.trim()) return <div key={i} style={{ height:8 }} />;
+        return <p key={i} style={{ color:'#a0a1a8', marginBottom:8 }}>{line}</p>;
+      })}
+    </div>
+  );
+}
+
+function App() {
+  const [client, setClient]           = useState({ name:'', website:'', industry:'', location:'' });
+  const [phase, setPhase]             = useState('input');
+  const [sections, setSections]       = useState([]);
+  const [activeTab, setActiveTab]     = useState(null);
+  const [swot, setSwot]               = useState(null);
+  const [progress, setProgress]       = useState(0);
+  const [currentTask, setCurrentTask] = useState('');
+  const abortRef                      = useRef(false);
+
+  async function runResearch() {
+    abortRef.current = false;
+    setPhase('researching'); setProgress(0); setSections([]); setSwot(null);
+    const results = [];
+    for (let i = 0; i < SECTIONS.length; i++) {
+      if (abortRef.current) break;
+      const section = SECTIONS[i];
+      if (i > 0) { setCurrentTask('Pausing before ' + section.label + '...'); await delay(8000); }
+      setCurrentTask('Researching ' + section.label + '...');
+      setProgress(Math.round((i / (SECTIONS.length + 1)) * 100));
+      try {
+        const content = await callAPI(section.prompt(client));
+        results.push({ ...section, content, status:'done' });
+        setSections([...results]);
+        if (i === 0) setActiveTab(section.id);
+      } catch(e) {
+        results.push({ ...section, content:'⚠ ' + e.message, status:'error' });
+        setSections([...results]);
+      }
+    }
+    if (!abortRef.current) {
+      setCurrentTask('Pausing before SWOT...'); await delay(8000);
+      setCurrentTask('Synthesizing SWOT & Strategy...'); setProgress(92);
+      try { setSwot(await callAPI(SWOT_PROMPT(client, results))); }
+      catch(e) { setSwot('⚠ SWOT failed: ' + e.message); }
+    }
+    setProgress(100); setCurrentTask('Research complete!'); setPhase('done');
+  }
+
+  function exportReport() {
+    const lines = ['CLIENTINTEL RESEARCH REPORT','='.repeat(50),
+      'Company:  '+client.name,'Website:  '+client.website,
+      'Industry: '+client.industry,'Location: '+client.location,
+      'Date:     '+new Date().toLocaleString(),'',
+      ...sections.flatMap(s=>['','─'.repeat(50),s.label.toUpperCase(),'─'.repeat(50),'',s.content||'']),
+      '','─'.repeat(50),'SWOT & STRATEGIC RECOMMENDATIONS','─'.repeat(50),'',swot||''];
+    const blob = new Blob([lines.join('\n')],{type:'text/plain;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href=url; a.download=client.name.replace(/\s+/g,'_')+'_Research.txt'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function resetApp() { setPhase('input'); setSections([]); setSwot(null); setActiveTab(null); }
+
+  const allFilled     = client.name && client.website && client.industry && client.location;
+  const activeSection = sections.find(s => s.id === activeTab);
+
+  const Header = () => (
+    <header style={{ borderBottom:'1px solid #12131a', padding:'0 32px', height:60, display:'flex', alignItems:'center', justifyContent:'space-between', background:'#07080c', position:'sticky', top:0, zIndex:100 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+        <div style={{ width:28, height:28, borderRadius:6, background:'linear-gradient(135deg,#00e5ff22,#7c3aed22)', border:'1px solid #00e5ff40', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13 }}>◎</div>
+        <span style={{ fontFamily:"'Syne',sans-serif", fontSize:17, fontWeight:800, color:'#fff', letterSpacing:'-0.5px' }}>
+          CLIENT<span style={{ color:'#00e5ff' }}>INTEL</span>
+        </span>
+        <span style={{ fontSize:9, letterSpacing:'0.2em', color:'#333', background:'#0e0f14', border:'1px solid #1a1b24', padding:'3px 8px', borderRadius:4 }}>AI RESEARCH AGENT</span>
+      </div>
+      {phase === 'done' && (
+        <div style={{ display:'flex', gap:8 }}>
+          <button className="btns" onClick={exportReport} style={{ background:'transparent', border:'1px solid #1e1f28', color:'#666', padding:'7px 14px', borderRadius:6, fontSize:11, letterSpacing:'0.1em', cursor:'pointer', fontFamily:'inherit' }}>⬇ EXPORT</button>
+          <button className="btnp" onClick={resetApp} style={{ background:'#00e5ff', border:'none', color:'#000', padding:'7px 16px', borderRadius:6, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>+ NEW CLIENT</button>
+        </div>
+      )}
+    </header>
+  );
+
+  if (phase === 'input') return (
+    <div style={{ minHeight:'100vh', display:'flex', flexDirection:'column' }}>
+      <Header />
+      <main style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', padding:'40px 24px' }}>
+        <div style={{ width:'100%', maxWidth:520 }} className="fade-up">
+          <div style={{ marginBottom:40, textAlign:'center' }}>
+            <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:36, fontWeight:800, color:'#fff', lineHeight:1.1, marginBottom:12, letterSpacing:'-1px' }}>
+              Full-spectrum<br />
+              <span style={{ background:'linear-gradient(90deg,#00e5ff,#7c3aed)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>client intelligence.</span>
+            </h1>
+            <p style={{ color:'#444', fontSize:13, lineHeight:1.8 }}>5 research modules + SWOT synthesis. Pauses between modules to stay within API limits.</p>
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            {[
+              {key:'name',     label:'COMPANY NAME',      ph:'e.g. Acme Corp'},
+              {key:'website',  label:'WEBSITE URL',       ph:'e.g. https://acmecorp.com'},
+              {key:'industry', label:'INDUSTRY / NICHE',  ph:'e.g. B2B SaaS, Healthcare'},
+              {key:'location', label:'LOCATION / REGION', ph:'e.g. Evansville, IN'},
+            ].map(f => (
+              <div key={f.key}>
+                <label style={{ display:'block', fontSize:9, letterSpacing:'0.18em', color:'#3a3b48', marginBottom:6 }}>{f.label}</label>
+                <input className="ifield" value={client[f.key]} onChange={e=>setClient(p=>({...p,[f.key]:e.target.value}))} placeholder={f.ph}
+                  style={{ width:'100%', background:'#0c0d12', border:'1px solid #1a1b24', borderRadius:8, padding:'12px 16px', color:'#e8e9ef', fontSize:13.5, fontFamily:'inherit', transition:'border-color 0.2s' }} />
+              </div>
+            ))}
+            <button className="btnp" onClick={runResearch} disabled={!allFilled} style={{
+              marginTop:6, border:'none', borderRadius:8, padding:'14px 24px',
+              fontSize:12, fontWeight:600, letterSpacing:'0.12em', fontFamily:'inherit',
+              background:allFilled?'#00e5ff':'#12131c', color:allFilled?'#000':'#2a2b38',
+              cursor:allFilled?'pointer':'not-allowed', transition:'background 0.15s',
+            }}>RUN RESEARCH AGENT →</button>
+          </div>
+          <div style={{ marginTop:28, display:'flex', flexWrap:'wrap', gap:6, justifyContent:'center' }}>
+            {SECTIONS.map(s=><span key={s.id} style={{ fontSize:9, letterSpacing:'0.1em', color:s.color, background:s.color+'12', padding:'4px 10px', borderRadius:4, border:'1px solid '+s.color+'25' }}>{s.icon} {s.label}</span>)}
+            <span style={{ fontSize:9, letterSpacing:'0.1em', color:'#888', background:'#12131c', padding:'4px 10px', borderRadius:4, border:'1px solid #1e1f28' }}>◆ SWOT + Strategy</span>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+
+  if (phase === 'researching') return (
+    <div style={{ minHeight:'100vh', display:'flex', flexDirection:'column' }}>
+      <Header />
+      <main style={{ flex:1, display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'60px 24px' }}>
+        <div style={{ width:'100%', maxWidth:580 }} className="fade-up">
+          <div style={{ marginBottom:32 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
+              <div style={{ width:7, height:7, borderRadius:'50%', background:'#00e5ff', animation:'pulseGlow 1.5s infinite' }} />
+              <span style={{ fontSize:10, color:'#00e5ff', letterSpacing:'0.2em' }}>AGENT ACTIVE</span>
+            </div>
+            <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:24, color:'#fff', fontWeight:700, marginBottom:4 }}>{client.name}</h2>
+            <div style={{ fontSize:12, color:'#444' }}>{client.industry} · {client.location}</div>
+          </div>
+          <div style={{ marginBottom:32 }}>
+            <div style={{ height:2, background:'#12131c', borderRadius:2, marginBottom:8, overflow:'hidden' }}>
+              <div style={{ height:'100%', width:progress+'%', background:'linear-gradient(90deg,#00e5ff,#7c3aed)', borderRadius:2, transition:'width 0.6s ease' }} />
+            </div>
+            <div style={{ display:'flex', justifyContent:'space-between' }}>
+              <span style={{ fontSize:10, color:'#444', letterSpacing:'0.1em' }}>{currentTask}</span>
+              <span style={{ fontSize:10, color:'#444' }}>{progress}%</span>
+            </div>
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {SECTIONS.map(section => {
+              const done=sections.find(s=>s.id===section.id), isActive=currentTask.includes(section.label);
+              return (
+                <div key={section.id} style={{ background:'#0c0d12', border:'1px solid '+(done?section.color+'35':isActive?'#2a2b38':'#12131c'), borderRadius:8, padding:'12px 16px', display:'flex', alignItems:'center', gap:14, transition:'all 0.3s' }}>
+                  <span style={{ fontSize:16, lineHeight:1, opacity:done||isActive?1:0.3 }}>{section.icon}</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:11, letterSpacing:'0.08em', color:done?section.color:isActive?'#fff':'#333' }}>{section.label}</div>
+                    {done&&<div style={{ fontSize:10, color:'#333', marginTop:3, overflow:'hidden', whiteSpace:'nowrap', textOverflow:'ellipsis', maxWidth:380 }}>{(done.content||'').replace(/[#*\n]/g,' ').substring(0,80)}…</div>}
+                  </div>
+                  {done?<span style={{ color:section.color, fontSize:13 }}>✓</span>
+                       :isActive?<div style={{ width:14, height:14, border:'2px solid #333', borderTopColor:'#fff', borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
+                                :<div style={{ width:5, height:5, borderRadius:'50%', background:'#1e1f28' }} />}
+                </div>
+              );
+            })}
+            <div style={{ background:'#0c0d12', border:'1px solid '+(swot?'#ffffff25':currentTask.includes('SWOT')?'#2a2b38':'#12131c'), borderRadius:8, padding:'12px 16px', display:'flex', alignItems:'center', gap:14, opacity:sections.length===SECTIONS.length||currentTask.includes('SWOT')?1:0.4 }}>
+              <span style={{ fontSize:16 }}>◆</span>
+              <div style={{ flex:1 }}><div style={{ fontSize:11, letterSpacing:'0.08em', color:swot||currentTask.includes('SWOT')?'#fff':'#333' }}>SWOT & Strategic Synthesis</div></div>
+              {swot?<span style={{ color:'#fff', fontSize:13 }}>✓</span>
+                   :currentTask.includes('SWOT')?<div style={{ width:14, height:14, border:'2px solid #333', borderTopColor:'#fff', borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
+                                                :<div style={{ width:5, height:5, borderRadius:'50%', background:'#1e1f28' }} />}
+            </div>
+          </div>
+          <div style={{ marginTop:16, padding:'10px 14px', background:'#0c0d12', border:'1px solid #1a1b24', borderRadius:8 }}>
+            <div style={{ fontSize:10, color:'#555', letterSpacing:'0.08em' }}>⏱ Pausing 8s between modules to stay within API rate limits. Full report ~2 minutes.</div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+
+  return (
+    <div style={{ height:'100vh', display:'flex', flexDirection:'column' }}>
+      <Header />
+      <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
+        <nav style={{ width:220, borderRight:'1px solid #0f1018', display:'flex', flexDirection:'column', flexShrink:0, overflowY:'auto', paddingTop:20 }}>
+          <div style={{ padding:'0 16px 16px', borderBottom:'1px solid #0f1018', marginBottom:8 }}>
+            <div style={{ fontSize:13, color:'#fff', fontFamily:"'Syne',sans-serif", fontWeight:700, marginBottom:2 }}>{client.name}</div>
+            <div style={{ fontSize:10, color:'#333', letterSpacing:'0.1em' }}>{(client.industry||'').toUpperCase()}</div>
+            <div style={{ fontSize:10, color:'#2a2b38', marginTop:2 }}>{client.location}</div>
+          </div>
+          {sections.map(section=>(
+            <button key={section.id} className="tab-item" onClick={()=>setActiveTab(section.id)} style={{ width:'100%', textAlign:'left', padding:'10px 16px', background:'transparent', border:'none', cursor:'pointer', fontFamily:'inherit', borderLeft:activeTab===section.id?'2px solid '+section.color:'2px solid transparent', color:activeTab===section.id?section.color:'#3a3b48', fontSize:11, letterSpacing:'0.07em', display:'flex', alignItems:'center', gap:10, transition:'all 0.15s' }}>
+              <span style={{ fontSize:14 }}>{section.icon}</span><span>{section.label}</span>
+            </button>
+          ))}
+          <button className="tab-item" onClick={()=>setActiveTab('swot')} style={{ width:'100%', textAlign:'left', padding:'10px 16px', background:'transparent', border:'none', cursor:'pointer', fontFamily:'inherit', borderLeft:activeTab==='swot'?'2px solid #fff':'2px solid transparent', color:activeTab==='swot'?'#fff':'#3a3b48', fontSize:11, letterSpacing:'0.07em', display:'flex', alignItems:'center', gap:10, marginTop:4, transition:'all 0.15s' }}>
+            <span style={{ fontSize:14 }}>◆</span><span>SWOT & Strategy</span>
+          </button>
+          <div style={{ marginTop:'auto', padding:16, borderTop:'1px solid #0f1018' }}>
+            <button className="btns" onClick={exportReport} style={{ width:'100%', background:'#0c0d12', border:'1px solid #1a1b24', color:'#555', padding:9, borderRadius:6, fontSize:10, letterSpacing:'0.12em', cursor:'pointer', fontFamily:'inherit' }}>⬇ EXPORT REPORT</button>
+          </div>
+        </nav>
+        <main style={{ flex:1, overflowY:'auto', padding:'36px 44px' }}>
+          {!activeTab&&(
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%' }}>
+              <div style={{ textAlign:'center', color:'#2a2b38' }}>
+                <div style={{ fontSize:32, marginBottom:12 }}>◈</div>
+                <div style={{ fontSize:13 }}>Select a module from the sidebar</div>
+              </div>
+            </div>
+          )}
+          {activeTab&&activeTab!=='swot'&&activeSection&&(
+            <div key={activeTab} className="fade-up">
+              <div style={{ display:'flex', alignItems:'flex-start', gap:14, marginBottom:28 }}>
+                <span style={{ fontSize:26, lineHeight:1 }}>{activeSection.icon}</span>
+                <div>
+                  <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:22, color:activeSection.color, fontWeight:700, marginBottom:4 }}>{activeSection.label}</h2>
+                  <div style={{ fontSize:11, color:'#333', letterSpacing:'0.1em' }}>{client.name} · {client.industry} · {client.location}</div>
+                </div>
+              </div>
+              <div style={{ background:'#0a0b10', border:'1px solid #12131c', borderRadius:10, padding:'28px 32px', borderTop:'2px solid '+activeSection.color+'40' }}>
+                <RenderContent text={activeSection.content} />
+              </div>
+            </div>
+          )}
+          {activeTab==='swot'&&(
+            <div key="swot" className="fade-up">
+              <div style={{ display:'flex', alignItems:'flex-start', gap:14, marginBottom:28 }}>
+                <span style={{ fontSize:26, lineHeight:1 }}>◆</span>
+                <div>
+                  <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:22, color:'#fff', fontWeight:700, marginBottom:4 }}>SWOT & Strategic Recommendations</h2>
+                  <div style={{ fontSize:11, color:'#333', letterSpacing:'0.1em' }}>Synthesized from all 5 research modules</div>
+                </div>
+              </div>
+              <div style={{ background:'#0a0b10', border:'1px solid #1e1f28', borderRadius:10, padding:'28px 32px', borderTop:'2px solid #ffffff20' }}>
+                <RenderContent text={swot} />
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
