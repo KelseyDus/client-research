@@ -1,6 +1,0 @@
-{
-  "routes": [
-    { "src": "/api/research", "dest": "/api/research.js" },
-    { "src": "/(.*)", "dest": "/index.html" }
-  ]
-}
