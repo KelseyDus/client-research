@@ -103,7 +103,7 @@ function App() {
     for (let i = 0; i < SECTIONS.length; i++) {
       if (abortRef.current) break;
       const section = SECTIONS[i];
-      if (i > 0) { setCurrentTask('Pausing before ' + section.label + '...'); await delay(8000); }
+      if (i > 0) { setCurrentTask('Pausing before ' + section.label + '...'); await delay(15000); }
       setCurrentTask('Researching ' + section.label + '...');
       setProgress(Math.round((i / (SECTIONS.length + 1)) * 100));
       try {
@@ -117,7 +117,7 @@ function App() {
       }
     }
     if (!abortRef.current) {
-      setCurrentTask('Pausing before SWOT...'); await delay(8000);
+      setCurrentTask('Pausing before SWOT...'); await delay(15000);
       setCurrentTask('Synthesizing SWOT & Strategy...'); setProgress(92);
       try { setSwot(await callAPI(SWOT_PROMPT(client, results))); }
       catch(e) { setSwot('⚠ SWOT failed: ' + e.message); }
